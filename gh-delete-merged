@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+#
+# gh delete-merged: delete local branches whose pull request was merged on GitHub.
+#
+# Works with squash merges, rebase merges, and stacked PRs because it never
+# compares diffs. It asks GitHub which merged PR each branch belongs to and only
+# deletes a branch when its local tip is exactly the commit that was merged.
+
+set -euo pipefail
+
+BATCH_SIZE=50
+
+usage() {
+  cat <<'EOF'
+Delete local branches whose pull request was merged on GitHub.
+
+Usage:
+  gh delete-merged [flags]
+
+By default this is a dry run that only lists what would be deleted.
+
+Flags:
+  -f, --force             Delete the branches instead of listing them
+  -e, --exclude <branch>  Never delete this branch (repeatable)
+  -h, --help              Show this help
+
+A branch is deleted only when a merged PR on this repository has the same head
+branch name AND the local branch points at exactly the commit that was merged.
+Branches with commits that were never merged are skipped. The default branch,
+the current branch, and branches checked out in other worktrees are never
+touched.
+EOF
+}
+
+die() {
+  echo "gh delete-merged: $*" >&2
+  exit 1
+}
+
+force=false
+excluded=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -f | --force) force=true ;;
+    -e | --exclude)
+      [[ $# -ge 2 ]] || die "--exclude needs a branch name"
+      excluded+="$2"$'\n'
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) die "unknown flag: $1 (see --help)" ;;
+  esac
+  shift
+done
+
+git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repository"
+
+repo=$(gh repo view --json owner,name,defaultBranchRef \
+  -q '"\(.owner.login) \(.name) \(.defaultBranchRef.name)"') ||
+  die "could not find the GitHub repository for this directory"
+read -r owner name default_branch <<<"$repo"
+
+current_branch=$(git branch --show-current)
+worktree_branches=$(git worktree list --porcelain | sed -n 's|^branch refs/heads/||p')
+
+branches=()
+shas=()
+while read -r branch sha; do
+  [[ "$branch" == "$default_branch" || "$branch" == "$current_branch" ]] && continue
+  grep -qxF -- "$branch" <<<"$worktree_branches" && continue
+  grep -qxF -- "$branch" <<<"$excluded" && continue
+  branches+=("$branch")
+  shas+=("$sha")
+done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/heads)
+
+if [[ ${#branches[@]} -eq 0 ]]; then
+  echo "No local branches to check."
+  exit 0
+fi
+
+# Looks up the merged PRs for branches[start..end) in a single GraphQL request and
+# prints one line per branch: "<index> <headRefOid>:<number>,<headRefOid>:<number>,..."
+lookup_merged_prs() {
+  local start=$1 end=$2 i escaped fields=""
+  for ((i = start; i < end; i++)); do
+    escaped=$(sed 's/[\\"]/\\&/g' <<<"${branches[$i]}")
+    fields+="b$i: pullRequests(headRefName: \"$escaped\", states: MERGED, first: 100) { nodes { number headRefOid } } "
+  done
+
+  gh api graphql \
+    -f query="query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) { $fields } }" \
+    -f owner="$owner" -f name="$name" \
+    --jq '.data.repository | to_entries[] | "\(.key[1:]) \(.value.nodes | map("\(.headRefOid):\(.number)") | join(","))"'
+}
+
+deleted=0
+skipped=0
+for ((start = 0; start < ${#branches[@]}; start += BATCH_SIZE)); do
+  end=$((start + BATCH_SIZE))
+  ((end > ${#branches[@]})) && end=${#branches[@]}
+
+  while read -r index prs; do
+    [[ -z "$prs" ]] && continue
+
+    branch=${branches[$index]}
+    sha=${shas[$index]}
+    match=$(tr ',' '\n' <<<"$prs" | grep "^$sha:" || true)
+
+    if [[ -z "$match" ]]; then
+      pr_numbers=$(tr ',' '\n' <<<"$prs" | sed 's/^[^:]*:/#/' | paste -sd ' ' -)
+      echo "skip    $branch (has commits that were not merged in $pr_numbers)"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    if $force; then
+      git branch -D --quiet -- "$branch"
+      echo "deleted $branch (#${match#*:})"
+    else
+      echo "delete  $branch (#${match#*:})"
+    fi
+    deleted=$((deleted + 1))
+  done < <(lookup_merged_prs "$start" "$end")
+done
+
+if [[ $deleted -eq 0 && $skipped -eq 0 ]]; then
+  echo "No branches with merged pull requests."
+elif ! $force && [[ $deleted -gt 0 ]]; then
+  echo
+  echo "Dry run: $deleted branch(es) would be deleted. Run with --force to delete them."
+fi
