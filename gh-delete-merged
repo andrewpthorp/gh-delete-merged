@@ -17,10 +17,10 @@ Delete local branches whose pull request was merged on GitHub.
 Usage:
   gh delete-merged [flags]
 
-By default this is a dry run that only lists what would be deleted.
+By default this deletes the branches. Use --dry-run to only list them.
 
 Flags:
-  -f, --force             Delete the branches instead of listing them
+  -n, --dry-run           List the branches instead of deleting them
   -e, --exclude <branch>  Never delete this branch (repeatable)
   -h, --help              Show this help
 
@@ -37,11 +37,11 @@ die() {
   exit 1
 }
 
-force=false
+dry_run=false
 excluded=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -f | --force) force=true ;;
+    -n | --dry-run) dry_run=true ;;
     -e | --exclude)
       [[ $# -ge 2 ]] || die "--exclude needs a branch name"
       excluded+="$2"$'\n'
@@ -116,11 +116,11 @@ for ((start = 0; start < ${#branches[@]}; start += BATCH_SIZE)); do
       continue
     fi
 
-    if $force; then
+    if $dry_run; then
+      echo "delete  $branch (#${match#*:})"
+    else
       git branch -D --quiet -- "$branch"
       echo "deleted $branch (#${match#*:})"
-    else
-      echo "delete  $branch (#${match#*:})"
     fi
     deleted=$((deleted + 1))
   done < <(lookup_merged_prs "$start" "$end")
@@ -128,7 +128,7 @@ done
 
 if [[ $deleted -eq 0 && $skipped -eq 0 ]]; then
   echo "No branches with merged pull requests."
-elif ! $force && [[ $deleted -gt 0 ]]; then
+elif $dry_run && [[ $deleted -gt 0 ]]; then
   echo
-  echo "Dry run: $deleted branch(es) would be deleted. Run with --force to delete them."
+  echo "Dry run: $deleted branch(es) would be deleted. Run without --dry-run to delete them."
 fi

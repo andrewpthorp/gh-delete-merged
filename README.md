@@ -22,8 +22,8 @@ Tools that detect merged branches with git alone (`git branch --merged`, `git-de
 Run it inside a repository:
 
 ```sh
-gh delete-merged            # dry run: list what would be deleted
-gh delete-merged --force    # delete those branches
+gh delete-merged --dry-run  # list what would be deleted
+gh delete-merged            # delete those branches
 ```
 
 ```
@@ -31,14 +31,14 @@ delete  feature/login-page (#1234)
 delete  fix/typo-in-readme (#1240)
 skip    feature/search (has commits that were not merged in #1251)
 
-Dry run: 2 branch(es) would be deleted. Run with --force to delete them.
+Dry run: 2 branch(es) would be deleted. Run without --dry-run to delete them.
 ```
 
 ### Flags
 
 | Flag | Description |
 | --- | --- |
-| `-f`, `--force` | Delete the branches instead of listing them |
+| `-n`, `--dry-run` | List the branches instead of deleting them |
 | `-e`, `--exclude <branch>` | Never delete this branch (can be repeated) |
 | `-h`, `--help` | Show help |
 
@@ -53,7 +53,7 @@ Dry run: 2 branch(es) would be deleted. Run with --force to delete them.
 ## Things to know
 
 - **It only touches local branches.** Remote branches are left alone.
-- **Long-lived branches can match.** If a branch like `develop` is the head of a merged PR (for example `develop` → `main`) and your local `develop` is exactly at that commit, it will be listed. Review the dry run, or use `--exclude develop`.
+- **Long-lived branches can match.** If a branch like `develop` is the head of a merged PR (for example `develop` → `main`) and your local `develop` is exactly at that commit, it will be listed. Run with `--dry-run` first, or use `--exclude develop`.
 - **"Merged" means merged into any base.** A stacked PR merged into its parent branch counts, because its commits are preserved there.
 - **It checks the repository `gh` resolves** for the current directory (see `gh repo set-default`).
 - Requires `gh` (authenticated) and `git`. Runs on the bash that ships with macOS (3.2).
