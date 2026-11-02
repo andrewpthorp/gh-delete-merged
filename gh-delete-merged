@@ -4,7 +4,9 @@
 #
 # Works with squash merges, rebase merges, and stacked PRs because it never
 # compares diffs. It asks GitHub which merged PR each branch belongs to and only
-# deletes a branch when its local tip is exactly the commit that was merged.
+# deletes a branch when its local tip is exactly the commit that was merged, or
+# a commit the PR head pointed at before being force-pushed (e.g. a restacked
+# stack whose local branches were never updated).
 
 set -euo pipefail
 
@@ -25,7 +27,8 @@ Flags:
   -h, --help              Show this help
 
 A branch is deleted only when a merged PR on this repository has the same head
-branch name AND the local branch points at exactly the commit that was merged.
+branch name AND the local branch points at exactly the commit that was merged,
+or at a commit that was the PR's head before a force-push (such as a restack).
 Branches with commits that were never merged are skipped. The default branch,
 the current branch, and branches checked out in other worktrees are never
 touched.
@@ -82,18 +85,19 @@ if [[ ${#branches[@]} -eq 0 ]]; then
 fi
 
 # Looks up the merged PRs for branches[start..end) in a single GraphQL request and
-# prints one line per branch: "<index> <headRefOid>:<number>,<headRefOid>:<number>,..."
+# prints one line per branch: "<index> <oid>:<number>,<oid>:<number>,...", where the
+# oids are each PR's merged head plus every head it had before a force-push.
 lookup_merged_prs() {
   local start=$1 end=$2 i escaped fields=""
   for ((i = start; i < end; i++)); do
     escaped=$(sed 's/[\\"]/\\&/g' <<<"${branches[$i]}")
-    fields+="b$i: pullRequests(headRefName: \"$escaped\", states: MERGED, first: 100) { nodes { number headRefOid } } "
+    fields+="b$i: pullRequests(headRefName: \"$escaped\", states: MERGED, first: 20) { nodes { number headRefOid timelineItems(itemTypes: HEAD_REF_FORCE_PUSHED_EVENT, first: 50) { nodes { ... on HeadRefForcePushedEvent { beforeCommit { oid } } } } } } "
   done
 
   gh api graphql \
     -f query="query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) { $fields } }" \
     -f owner="$owner" -f name="$name" \
-    --jq '.data.repository | to_entries[] | "\(.key[1:]) \(.value.nodes | map("\(.headRefOid):\(.number)") | join(","))"'
+    --jq '.data.repository | to_entries[] | "\(.key[1:]) \(.value.nodes | map(.number as $n | ([.headRefOid] + [.timelineItems.nodes[].beforeCommit.oid // empty])[] | "\(.):\($n)") | join(","))"'
 }
 
 deleted=0
@@ -110,7 +114,7 @@ for ((start = 0; start < ${#branches[@]}; start += BATCH_SIZE)); do
     match=$(tr ',' '\n' <<<"$prs" | grep "^$sha:" || true)
 
     if [[ -z "$match" ]]; then
-      pr_numbers=$(tr ',' '\n' <<<"$prs" | sed 's/^[^:]*:/#/' | paste -sd ' ' -)
+      pr_numbers=$(tr ',' '\n' <<<"$prs" | sed 's/^[^:]*:/#/' | sort -u | paste -sd ' ' -)
       echo "skip    $branch (has commits that were not merged in $pr_numbers)"
       skipped=$((skipped + 1))
       continue

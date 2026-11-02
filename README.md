@@ -15,7 +15,7 @@ Tools that detect merged branches with git alone (`git branch --merged`, `git-de
 - the branch was **rebased or amended**, or `main` was merged into it during review
 - the PR was edited on GitHub (suggestions, conflict resolution)
 
-`gh delete-merged` asks GitHub instead. For each local branch it looks up merged pull requests with that head branch, and only deletes the branch when its local tip is **exactly** the commit that was merged. If you have commits that were never merged, the branch is skipped.
+`gh delete-merged` asks GitHub instead. For each local branch it looks up merged pull requests with that head branch, and only deletes the branch when its local tip is **exactly** the commit that was merged, or a commit the PR's head pointed at before a force-push (for example, a stack that was restacked on GitHub while your local branches stayed put). If you have commits that were never merged, the branch is skipped.
 
 ## Usage
 
@@ -48,13 +48,14 @@ Dry run: 2 branch(es) would be deleted. Run without --dry-run to delete them.
 - the branch you have checked out
 - branches checked out in other worktrees
 - branches passed to `--exclude`
-- branches whose local tip differs from the merged PR's head commit
+- branches whose local tip is neither the merged PR's head commit nor one of its earlier, force-pushed heads
 
 ## Things to know
 
 - **It only touches local branches.** Remote branches are left alone.
 - **Long-lived branches can match.** If a branch like `develop` is the head of a merged PR (for example `develop` → `main`) and your local `develop` is exactly at that commit, it will be listed. Run with `--dry-run` first, or use `--exclude develop`.
 - **"Merged" means merged into any base.** A stacked PR merged into its parent branch counts, because its commits are preserved there.
+- **Earlier heads count.** If someone force-pushed the PR to drop commits and then merged it, a local branch still at the old head will be deleted. GitHub keeps a record of that force-push, so the commit was part of the PR at some point.
 - **It checks the repository `gh` resolves** for the current directory (see `gh repo set-default`).
 - Requires `gh` (authenticated) and `git`. Runs on the bash that ships with macOS (3.2).
 
