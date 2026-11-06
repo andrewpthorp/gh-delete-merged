@@ -15,7 +15,7 @@ Tools that detect merged branches with git alone (`git branch --merged`, `git-de
 - the branch was **rebased or amended**, or `main` was merged into it during review
 - the PR was edited on GitHub (suggestions, conflict resolution)
 
-`gh delete-merged` asks GitHub instead. For each local branch it looks up merged pull requests with that head branch, and only deletes the branch when its local tip is **exactly** the commit that was merged, or a commit the PR's head pointed at before a force-push (for example, a stack that was restacked on GitHub while your local branches stayed put). If you have commits that were never merged, the branch is skipped.
+`gh delete-merged` asks GitHub instead. For each local branch it looks up merged pull requests with that head branch, and only deletes the branch when its local tip is **exactly** the commit that was merged, a commit the PR's head pointed at before a force-push (for example, a stack that was restacked on GitHub while your local branches stayed put), or a commit that's already in the default branch (for example, a branch you rebased onto `main` after its PR merged). If you have commits that were never merged, the branch is skipped.
 
 ## Usage
 
@@ -48,7 +48,7 @@ Dry run: 2 branch(es) would be deleted. Run without --dry-run to delete them.
 - the branch you have checked out
 - branches checked out in other worktrees
 - branches passed to `--exclude`
-- branches whose local tip is neither the merged PR's head commit nor one of its earlier, force-pushed heads
+- branches whose local tip is neither the merged PR's head commit, one of its earlier, force-pushed heads, nor already in the default branch
 
 ## Things to know
 

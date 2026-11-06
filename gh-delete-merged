@@ -4,7 +4,8 @@
 #
 # Works with squash merges, rebase merges, and stacked PRs because it never
 # compares diffs. It asks GitHub which merged PR each branch belongs to and only
-# deletes a branch when its local tip is exactly the commit that was merged, or
+# deletes a branch when its local tip is exactly the commit that was merged, a
+# commit already in the default branch (e.g. rebased after the merge), or
 # a commit the PR head pointed at before being force-pushed (e.g. a restacked
 # stack whose local branches were never updated).
 
@@ -28,7 +29,8 @@ Flags:
 
 A branch is deleted only when a merged PR on this repository has the same head
 branch name AND the local branch points at exactly the commit that was merged,
-or at a commit that was the PR's head before a force-push (such as a restack).
+at a commit that was the PR's head before a force-push (such as a restack), or
+at a commit already in the default branch (such as a rebase after the merge).
 Branches with commits that were never merged are skipped. The default branch,
 the current branch, and branches checked out in other worktrees are never
 touched.
@@ -65,6 +67,13 @@ repo=$(gh repo view --json owner,name,defaultBranchRef \
   -q '"\(.owner.login) \(.name) \(.defaultBranchRef.name)"') ||
   die "could not find the GitHub repository for this directory"
 read -r owner name default_branch <<<"$repo"
+
+# A branch rebased onto the default branch after its PR merged no longer points at
+# the PR's head, but every commit on it is already in the default branch
+default_ref=""
+if git fetch --quiet origin "$default_branch" 2>/dev/null; then
+  default_ref="origin/$default_branch"
+fi
 
 current_branch=$(git branch --show-current)
 worktree_branches=$(git worktree list --porcelain | sed -n 's|^branch refs/heads/||p')
@@ -112,6 +121,11 @@ for ((start = 0; start < ${#branches[@]}; start += BATCH_SIZE)); do
     branch=${branches[$index]}
     sha=${shas[$index]}
     match=$(tr ',' '\n' <<<"$prs" | grep "^$sha:" || true)
+
+    if [[ -z "$match" && -n "$default_ref" ]] &&
+      git merge-base --is-ancestor "$sha" "$default_ref" 2>/dev/null; then
+      match="$sha:$(tr ',' '\n' <<<"$prs" | head -1 | cut -d: -f2)"
+    fi
 
     if [[ -z "$match" ]]; then
       pr_numbers=$(tr ',' '\n' <<<"$prs" | sed 's/^[^:]*:/#/' | sort -u | paste -sd ' ' -)
